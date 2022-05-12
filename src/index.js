@@ -3,13 +3,14 @@ const express = require("express");
 const dotenv = require("dotenv");
 const axios = require("axios");
 const path = require("path");
-const fs = require("fs");
+const { LocalStorage } = require("node-localstorage");
 const passport = require("passport");
 const session = require("express-session");
 const ZohoCRMStrategy = require("passport-zoho-crm").Strategy;
 const connectDB = require("./database/db");
 const User = require("./database/models/user");
 const app = express();
+const localStorage = new LocalStorage("./scratch");
 
 dotenv.config();
 app.use(express.json());
@@ -26,6 +27,8 @@ const scope = [
   "ZohoCRM.modules.leads.ALL",
   "ZohoCRM.modules.contacts.ALL",
   "ZohoMail.messages.ALL",
+  "ZohoMail.folders.ALL",
+  "ZohoMail.accounts.ALL",
 ];
 const REDIRECT_URL = process.env.REDIRECT_URL;
 app.use(
@@ -64,6 +67,8 @@ passport.use(
           accessToken,
           refreshToken,
         };
+        // set access token and refresh token to user
+        localStorage.setItem("user", JSON.stringify(user));
 
         // set access token in the cookie
 
@@ -81,6 +86,7 @@ passport.use(
           accessToken,
           refreshToken,
         };
+        localStorage.setItem("user", JSON.stringify(userData));
         if (user) {
           return done(null, userData);
         }
@@ -121,32 +127,89 @@ app.get(
 );
 
 // success page
-app.get("/success", isLoggedIn, (req, res) => {
-  res.sendFile(path.join(__dirname, "../public/success.html"));
+app.get("/success", (req, res) => {
+  // get user data from local storage
+  const user = localStorage.getItem("user");
+  if (!user) {
+    return res.status(401).json({
+      message: "unuthorized user, Please login",
+    });
+  }
+
+  return res.sendFile(path.join(__dirname, "../public/success.html"));
 });
 
 // read all mails from zoho
-app.get("/zoho/mails", isLoggedIn, async (req, res) => {
+app.get("/zoho/mails", async (req, res) => {
+  // get user data from local storage
+  const user = localStorage.getItem("user");
+  if (!user) {
+    return res.status(401).json({ message: "unuthorized user" });
+  }
+  const userData = JSON.parse(user);
+
   const {
     accessToken,
+    refreshToken,
     profile: {
       _json: { ZUID },
     },
-  } = req.user;
+  } = userData;
+
+  const responseAc = await axios.get(" http://mail.zoho.com/api/accounts", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const accountId = responseAc.data.data[0].accountId;
+
+  // get folder details url
+  // https://mail.zoho.com/api/accounts/<accountId>/folders
+
+  // get all forlder details
+  // const folderUrl = `https://mail.zoho.com/api/accounts/${accountId}/folders`;
+  // const folderData = await axios.get(folderUrl, {
+  //   headers: {
+  //     Authorization: `Bearer ${accessToken}`,
+  //   },
+  // });
 
   const response = await axios.get(
-    `https://mail.zoho.com/api/accounts/${ZUID}/messages/view`,
+    `http://mail.zoho.com/api/accounts/${accountId}/messages/view`,
     {
       headers: {
-        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
       },
     }
   );
-  console.log("response", response.data);
   const mailsData = response.data;
   res.status(200).json({
     message: "success",
     data: mailsData,
+  });
+});
+
+app.get("/zoho/account", async (req, res) => {
+  const user = localStorage.getItem("user");
+  if (!user) {
+    return res.status(401).json({ message: "unuthorized user" });
+  }
+  const userData = JSON.parse(user);
+  const {
+    accessToken,
+    refreshToken,
+    profile: {
+      _json: { ZUID },
+    },
+  } = userData;
+  const response = await axios.get(" http://mail.zoho.com/api/accounts", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  return res.status(200).json({
+    message: "success",
+    data: response.data,
   });
 });
 
