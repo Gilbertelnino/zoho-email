@@ -11,6 +11,7 @@ const connectDB = require("./database/db");
 const User = require("./database/models/user");
 const app = express();
 const localStorage = new LocalStorage("./scratch");
+const fs = require("fs");
 
 dotenv.config();
 app.use(express.json());
@@ -20,12 +21,7 @@ const PORT = process.env.PORT || 3000;
 const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID;
 const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET;
 const scope = [
-  "ZohoCRM.modules.ALL",
-  "ZohoCRM.settings.ALL",
-  "ZohoCRM.users.ALL",
   "aaaserver.profile.ALL",
-  "ZohoCRM.modules.leads.ALL",
-  "ZohoCRM.modules.contacts.ALL",
   "ZohoMail.messages.ALL",
   "ZohoMail.folders.ALL",
   "ZohoMail.accounts.ALL",
@@ -95,14 +91,6 @@ passport.use(
   )
 );
 
-const isLoggedIn = (req, res, next) => {
-  if (req.user) {
-    next();
-  } else {
-    res.sendFile(path.join(__dirname, "../public/index.html"));
-  }
-};
-
 app.get("/auth/zoho-crm/login", (req, res) => {
   res.redirect(
     "https://accounts.zoho.com/oauth/v2/auth?response_type=code&client_id=" +
@@ -131,9 +119,7 @@ app.get("/success", (req, res) => {
   // get user data from local storage
   const user = localStorage.getItem("user");
   if (!user) {
-    return res.status(401).json({
-      message: "unuthorized user, Please login",
-    });
+    return res.sendFile(path.join(__dirname, "../public/index.html"));
   }
 
   return res.sendFile(path.join(__dirname, "../public/success.html"));
@@ -144,17 +130,11 @@ app.get("/zoho/mails", async (req, res) => {
   // get user data from local storage
   const user = localStorage.getItem("user");
   if (!user) {
-    return res.status(401).json({ message: "unuthorized user" });
+    return res.sendFile(path.join(__dirname, "../public/index.html"));
   }
   const userData = JSON.parse(user);
 
-  const {
-    accessToken,
-    refreshToken,
-    profile: {
-      _json: { ZUID },
-    },
-  } = userData;
+  const { accessToken } = userData;
 
   const responseAc = await axios.get(" http://mail.zoho.com/api/accounts", {
     headers: {
@@ -162,17 +142,6 @@ app.get("/zoho/mails", async (req, res) => {
     },
   });
   const accountId = responseAc.data.data[0].accountId;
-
-  // get folder details url
-  // https://mail.zoho.com/api/accounts/<accountId>/folders
-
-  // get all forlder details
-  // const folderUrl = `https://mail.zoho.com/api/accounts/${accountId}/folders`;
-  // const folderData = await axios.get(folderUrl, {
-  //   headers: {
-  //     Authorization: `Bearer ${accessToken}`,
-  //   },
-  // });
 
   const response = await axios.get(
     `http://mail.zoho.com/api/accounts/${accountId}/messages/view`,
@@ -182,7 +151,7 @@ app.get("/zoho/mails", async (req, res) => {
       },
     }
   );
-  const mailsData = response.data;
+  const mailsData = response.data.data;
   res.status(200).json({
     message: "success",
     data: mailsData,
@@ -192,7 +161,7 @@ app.get("/zoho/mails", async (req, res) => {
 app.get("/zoho/account", async (req, res) => {
   const user = localStorage.getItem("user");
   if (!user) {
-    return res.status(401).json({ message: "unuthorized user" });
+    return res.sendFile(path.join(__dirname, "../public/index.html"));
   }
   const userData = JSON.parse(user);
   const {
@@ -211,6 +180,184 @@ app.get("/zoho/account", async (req, res) => {
     message: "success",
     data: response.data,
   });
+});
+
+app.get("/zoho/folder", async (req, res) => {
+  // get user data from local storage
+  const user = localStorage.getItem("user");
+  if (!user) {
+    return res.sendFile(path.join(__dirname, "../public/index.html"));
+  }
+  const userData = JSON.parse(user);
+
+  const { accessToken } = userData;
+
+  const responseAc = await axios.get(" http://mail.zoho.com/api/accounts", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const accountId = responseAc.data.data[0].accountId;
+
+  // get all forlder details
+  const folderUrl = `https://mail.zoho.com/api/accounts/${accountId}/folders`;
+  const folderData = await axios.get(folderUrl, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const mailsData = folderData.data;
+  res.status(200).json({
+    message: "success",
+    data: mailsData,
+  });
+});
+
+app.get("/zoho/attachments", async (req, res) => {
+  const user = localStorage.getItem("user");
+  if (!user) {
+    return res.sendFile(path.join(__dirname, "../public/index.html"));
+  }
+  const userData = JSON.parse(user);
+
+  const { accessToken } = userData;
+
+  const responseAc = await axios.get(" http://mail.zoho.com/api/accounts", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const accountId = responseAc.data.data[0].accountId;
+
+  const response = await axios.get(
+    `http://mail.zoho.com/api/accounts/${accountId}/messages/view`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+  const mailsData = response.data.data;
+
+  // get all attachments
+  // url: http://mail.zoho.com/api/accounts/<accountId>/folders/folderid/messages/<messageId>/attachmentinfo
+
+  // get folder ids from mailsData
+  const attachments = [];
+  for (let i = 0; i < mailsData.length; i++) {
+    const messageId = mailsData[i].messageId;
+    const folderId = mailsData[i].folderId;
+    const folderUrl = `https://mail.zoho.com/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`;
+    const attachmentData = await axios.get(folderUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    attachments.push(attachmentData.data);
+  }
+  return res.status(200).json({
+    message: "success",
+    data: attachments,
+  });
+});
+
+// download attachment
+app.get("/zoho/attachment/download", async (req, res) => {
+  const user = localStorage.getItem("user");
+  if (!user) {
+    return res.sendFile(path.join(__dirname, "../public/index.html"));
+  }
+  const userData = JSON.parse(user);
+
+  const { accessToken } = userData;
+
+  const responseAc = await axios.get(" http://mail.zoho.com/api/accounts", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  const accountId = responseAc.data.data[0].accountId;
+
+  const response = await axios.get(
+    `http://mail.zoho.com/api/accounts/${accountId}/messages/view`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+  const mailsData = response.data.data;
+
+  // get all attachments
+  // url: http://mail.zoho.com/api/accounts/<accountId>/folders/folderid/messages/<messageId>/attachmentinfo
+
+  // get attachements from mailsData
+  let attachments = [];
+  for (let i = 0; i < mailsData.length; i++) {
+    const messageId = mailsData[i].messageId;
+    const folderId = mailsData[i].folderId;
+    const folderUrl = `https://mail.zoho.com/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`;
+    const attachmentData = await axios.get(folderUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    if (attachmentData.data.data.attachments.length > 0) {
+      attachments = [
+        ...attachments,
+        {
+          attachement: attachmentData.data.data.attachments.map(
+            (attachment) => {
+              return {
+                ...attachment,
+                messageId,
+                folderId,
+              };
+            }
+          ),
+        },
+      ];
+    }
+  }
+
+  // loop through attachements and download Attachment from attachments and save it in attachements folder
+  // console.log("attachments", attachments);
+  for (let i = 0; i < attachments.length; i++) {
+    const { attachement } = attachments[i];
+    // console.log("attachement", attachement);
+    for (let j = 0; j < attachement.length; j++) {
+      // attachments array
+      const { attachmentId, attachmentName, folderId, messageId } =
+        attachement[j];
+      // // URL: https://mail.zoho.com/api/accounts/<accountId>/folders/<folderId>/messages/<messageId>/attachments/<attachId>
+      const attachmentUrl = `https://mail.zoho.com/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`;
+      const attachmentData = await axios.get(attachmentUrl, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      const data = attachmentData.data;
+      const buffer = Buffer.from(data, "base64");
+      // console.log("data::::", data);
+      // // save attachment in attachments folder
+
+      // create folder if it doesn't exist
+      if (!fs.existsSync("./public/attachments")) {
+        fs.mkdirSync("./public/attachments");
+      }
+
+      // create file and write stream to it
+      const file = fs.createWriteStream(
+        `./public/attachments/${attachmentName}`
+      );
+      file.write(buffer);
+      file.end();
+    }
+  }
+  // res.status(200).json({ message: "success", attachments });
+  return res.sendFile(path.join(__dirname, "../public/download-success.html"));
 });
 
 // logout
